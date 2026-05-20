@@ -3,6 +3,8 @@ package com.duoc.reservams.roomservice.service;
 import com.duoc.reservams.roomservice.dto.RoomRequestDTO;
 import com.duoc.reservams.roomservice.dto.RoomResponseDTO;
 import com.duoc.reservams.roomservice.model.Room;
+import com.duoc.reservams.roomservice.client.HotelClient;
+import com.duoc.reservams.roomservice.dto.HotelResponseDTO;
 import com.duoc.reservams.roomservice.repository.RoomRepository;
 import org.springframework.stereotype.Service;
 
@@ -15,8 +17,12 @@ public class RoomService {
 
     private final RoomRepository roomRepository;
 
-    public RoomService(RoomRepository roomRepository) {
+    private final HotelClient hotelClient;
+
+    public RoomService(RoomRepository roomRepository,
+                       HotelClient hotelClient) {
         this.roomRepository = roomRepository;
+        this.hotelClient = hotelClient;
     }
 
     public List<RoomResponseDTO> findAll() {
@@ -48,6 +54,19 @@ public class RoomService {
     }
 
     public RoomResponseDTO create(RoomRequestDTO request) {
+        try {
+            // antes de crear la habitacion, verificamos que el hotel exista
+            HotelResponseDTO hotel = hotelClient.findById(request.getHotelId());
+
+            // no permitimos crear habitaciones en hoteles inactivos
+            if (!hotel.getStatus().equals("ACTIVE")) {
+                throw new RuntimeException("No se puede crear habitacion en un hotel inactivo");
+            }
+
+        } catch (Exception ex) {
+            throw new RuntimeException("No se pudo validar el hotel: " + ex.getMessage());
+        }
+
         Room room = new Room();
         room.setHotelId(request.getHotelId());
         room.setRoomNumber(request.getRoomNumber());
@@ -64,7 +83,19 @@ public class RoomService {
 
     public RoomResponseDTO update(Long id, RoomRequestDTO request) {
         Room room = roomRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Habitación no encontrada"));
+                .orElseThrow(() -> new RuntimeException("Habitacion no encontrada"));
+
+        try {
+            // validamos que el hotel exista antes de actualizar la habitacion
+            HotelResponseDTO hotel = hotelClient.findById(request.getHotelId());
+
+            if (!hotel.getStatus().equals("ACTIVE")) {
+                throw new RuntimeException("No se puede asignar habitacion a un hotel inactivo");
+            }
+
+        } catch (Exception ex) {
+            throw new RuntimeException("No se pudo validar el hotel: " + ex.getMessage());
+        }
 
         room.setHotelId(request.getHotelId());
         room.setRoomNumber(request.getRoomNumber());
