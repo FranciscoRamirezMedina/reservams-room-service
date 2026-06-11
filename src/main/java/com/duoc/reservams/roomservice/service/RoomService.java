@@ -8,12 +8,17 @@ import com.duoc.reservams.roomservice.dto.HotelResponseDTO;
 import com.duoc.reservams.roomservice.repository.RoomRepository;
 import org.springframework.stereotype.Service;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.LocalDateTime;
 import java.util.List;
 
 // aqui va la logica de negocio de habitaciones
 @Service
 public class RoomService {
+
+    private static final Logger logger = LoggerFactory.getLogger(RoomService.class);
 
     private final RoomRepository roomRepository;
 
@@ -26,46 +31,68 @@ public class RoomService {
     }
 
     public List<RoomResponseDTO> findAll() {
-        return roomRepository.findAll()
+        logger.info("Listando todas las habitaciones");
+
+        List<RoomResponseDTO> rooms = roomRepository.findAll()
                 .stream()
                 .map(this::toResponseDTO)
                 .toList();
+
+        logger.info("Se encontraron {} habitaciones", rooms.size());
+
+        return rooms;
     }
 
     public RoomResponseDTO findById(Long id) {
+        logger.info("Buscando habitacion por ID {}", id);
+
         Room room = roomRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Habitación no encontrada"));
+                .orElseThrow(() -> {
+                    logger.warn("No se encontro habitacion con ID {}", id);
+                    return new RuntimeException("Habitación no encontrada");
+                });
+
+        logger.info("Habitacion encontrada con ID {}, hotel ID {} y numero {}",
+                room.getId(),
+                room.getHotelId(),
+                room.getRoomNumber());
 
         return toResponseDTO(room);
     }
 
     public List<RoomResponseDTO> findByHotelId(Long hotelId) {
-        return roomRepository.findByHotelId(hotelId)
+        logger.info("Listando habitaciones del hotel ID {}", hotelId);
+
+        List<RoomResponseDTO> rooms = roomRepository.findByHotelId(hotelId)
                 .stream()
                 .map(this::toResponseDTO)
                 .toList();
+
+        logger.info("Se encontraron {} habitaciones para el hotel ID {}", rooms.size(), hotelId);
+
+        return rooms;
     }
 
     public List<RoomResponseDTO> findAvailableByHotel(Long hotelId) {
-        return roomRepository.findByHotelIdAndStatus(hotelId, "AVAILABLE")
+        logger.info("Listando habitaciones disponibles del hotel ID {}", hotelId);
+
+        List<RoomResponseDTO> rooms = roomRepository.findByHotelIdAndStatus(hotelId, "AVAILABLE")
                 .stream()
                 .map(this::toResponseDTO)
                 .toList();
+
+        logger.info("Se encontraron {} habitaciones disponibles para el hotel ID {}", rooms.size(), hotelId);
+
+        return rooms;
     }
 
     public RoomResponseDTO create(RoomRequestDTO request) {
-        try {
-            // antes de crear la habitacion, verificamos que el hotel exista
-            HotelResponseDTO hotel = hotelClient.findById(request.getHotelId());
+        logger.info("Iniciando creacion de habitacion numero {} para hotel ID {}",
+                request.getRoomNumber(),
+                request.getHotelId());
 
-            // no permitimos crear habitaciones en hoteles inactivos
-            if (!hotel.getStatus().equals("ACTIVE")) {
-                throw new RuntimeException("No se puede crear habitacion en un hotel inactivo");
-            }
-
-        } catch (Exception ex) {
-            throw new RuntimeException("No se pudo validar el hotel: " + ex.getMessage());
-        }
+        // antes de crear la habitacion, verificamos que el hotel exista
+        validateActiveHotel(request.getHotelId(), "crear habitacion");
 
         Room room = new Room();
         room.setHotelId(request.getHotelId());
@@ -76,26 +103,32 @@ public class RoomService {
         room.setStatus(request.getStatus());
         room.setCreatedAt(LocalDateTime.now());
 
+        logger.info("Guardando habitacion numero {} para hotel ID {} con estado {}",
+                room.getRoomNumber(),
+                room.getHotelId(),
+                room.getStatus());
+
         Room savedRoom = roomRepository.save(room);
+
+        logger.info("Habitacion creada correctamente con ID {}, hotel ID {} y numero {}",
+                savedRoom.getId(),
+                savedRoom.getHotelId(),
+                savedRoom.getRoomNumber());
 
         return toResponseDTO(savedRoom);
     }
 
     public RoomResponseDTO update(Long id, RoomRequestDTO request) {
+        logger.info("Iniciando actualizacion de habitacion con ID {}", id);
+
         Room room = roomRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Habitacion no encontrada"));
+                .orElseThrow(() -> {
+                    logger.warn("No se pudo actualizar. Habitacion no encontrada con ID {}", id);
+                    return new RuntimeException("Habitacion no encontrada");
+                });
 
-        try {
-            // validamos que el hotel exista antes de actualizar la habitacion
-            HotelResponseDTO hotel = hotelClient.findById(request.getHotelId());
-
-            if (!hotel.getStatus().equals("ACTIVE")) {
-                throw new RuntimeException("No se puede asignar habitacion a un hotel inactivo");
-            }
-
-        } catch (Exception ex) {
-            throw new RuntimeException("No se pudo validar el hotel: " + ex.getMessage());
-        }
+        // validamos que el hotel exista antes de actualizar la habitacion
+        validateActiveHotel(request.getHotelId(), "actualizar habitacion");
 
         room.setHotelId(request.getHotelId());
         room.setRoomNumber(request.getRoomNumber());
@@ -104,18 +137,63 @@ public class RoomService {
         room.setPricePerNight(request.getPricePerNight());
         room.setStatus(request.getStatus());
 
+        logger.info("Guardando cambios de habitacion ID {}", id);
+
         Room updatedRoom = roomRepository.save(room);
+
+        logger.info("Habitacion actualizada correctamente con ID {}, hotel ID {} y estado {}",
+                updatedRoom.getId(),
+                updatedRoom.getHotelId(),
+                updatedRoom.getStatus());
 
         return toResponseDTO(updatedRoom);
     }
 
     public void delete(Long id) {
+        logger.info("Iniciando desactivacion de habitacion con ID {}", id);
+
         Room room = roomRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Habitación no encontrada"));
+                .orElseThrow(() -> {
+                    logger.warn("No se pudo desactivar. Habitacion no encontrada con ID {}", id);
+                    return new RuntimeException("Habitación no encontrada");
+                });
 
         // no eliminamos fisicamente, solo cambiamos el estado
         room.setStatus("INACTIVE");
         roomRepository.save(room);
+
+        logger.info("Habitacion con ID {} fue desactivada correctamente", id);
+    }
+
+    private void validateActiveHotel(Long hotelId, String operation) {
+        try {
+            logger.info("Validando hotel ID {} mediante OpenFeign para {}", hotelId, operation);
+
+            HotelResponseDTO hotel = hotelClient.findById(hotelId);
+
+            if (!hotel.getStatus().equals("ACTIVE")) {
+                logger.warn("No se puede {}. Hotel ID {} se encuentra con estado {}",
+                        operation,
+                        hotel.getId(),
+                        hotel.getStatus());
+
+                if (operation.equals("crear habitacion")) {
+                    throw new RuntimeException("No se puede crear habitacion en un hotel inactivo");
+                }
+
+                throw new RuntimeException("No se puede asignar habitacion a un hotel inactivo");
+            }
+
+            logger.info("Hotel ID {} validado correctamente para {}", hotel.getId(), operation);
+
+        } catch (Exception ex) {
+            logger.warn("No se pudo validar el hotel ID {} para {}. Motivo: {}",
+                    hotelId,
+                    operation,
+                    ex.getMessage());
+
+            throw new RuntimeException("No se pudo validar el hotel: " + ex.getMessage());
+        }
     }
 
     // convierte una entidad Room a DTO de respuesta
