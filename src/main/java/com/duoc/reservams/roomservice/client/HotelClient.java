@@ -6,7 +6,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 
 // cliente Feign para comunicarse con hotel-service
-@FeignClient(name = "reservams-hotel-service", url = "http://localhost:8083")
+@FeignClient(name = "reservams-hotel-service")
 public interface HotelClient {
 
     // busca un hotel por ID en hotel-service
